@@ -1,4 +1,4 @@
-module NLFSR #(parameter SIZE = 24, NUM_OF_TAPS = 4, BYTES = 4)(
+module NLFSR #(parameter SIZE = 24, NUM_OF_TAPS = 2, BYTES = 4)(
 
 	input 					clk,
 	input 					res,
@@ -9,7 +9,8 @@ module NLFSR #(parameter SIZE = 24, NUM_OF_TAPS = 4, BYTES = 4)(
 	
 	output reg 	ready,
 	output reg	failure,
-	output reg	found
+	output reg	found,
+	output reg [NUM_OF_TAPS*8-1:0]		co_buf_non
 );
 
 parameter [35:0] period = (2**SIZE) - 1;
@@ -22,7 +23,7 @@ reg [7:0] j;
 reg [SIZE-1:0] state;
 reg [NUM_OF_TAPS:1] TAPS;
 
-reg [NUM_OF_TAPS*8-1:0]		co_buf_non;
+
 
 initial begin
 	co_buf_non <= {NUM_OF_TAPS{8'h00}};
@@ -39,7 +40,7 @@ end
 reg [SIZE-1:1] feedback;
 
 wire feedback1;
-assign feedback1 = ^feedback ^ state[0] ^ (TAPS[1] & TAPS[2]) ^ (TAPS[3] & TAPS[4]);
+assign feedback1 = ^feedback ^ state[0] ^ (TAPS[1] & TAPS[2]);// ^ (TAPS[3] & TAPS[4]);
 
 always @ (posedge clk) begin
 	if (res) begin
@@ -53,8 +54,11 @@ always @ (posedge clk) begin
 	end
 	if (ena) begin
 		if (!ready) begin
-			if (take_coef && taps_count <= NUM_OF_TAPS) begin
-				co_buf_non[taps_count*8-1-:8] <= {3'b000,coef[4:0]};
+			if (take_coef && taps_count <= NUM_OF_TAPS && coef[4:0] < SIZE) begin
+				if (taps_count == 1)
+					co_buf_non[taps_count*8-1-:8] <= {3'b000,coef[4:0]};
+				if (taps_count == 2 && coef[4:0] != co_buf_non[4:0])
+					co_buf_non[taps_count*8-1-:8] <= {3'b000,coef[4:0]};
 				taps_count <= taps_count + 1;
 				if (taps_count == NUM_OF_TAPS) begin
 					ready <= 1'b1;

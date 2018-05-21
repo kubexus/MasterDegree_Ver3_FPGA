@@ -1,4 +1,4 @@
-module Interface #(parameter NUM_OF_TAPS = 5, NUM_OF_MODULES = 20, SIZE = 24, BYTES = 4)(
+module Interface #(parameter NUM_OF_TAPS = 5, NUM_OF_MODULES = 20, SIZE = 24, BYTES = 4 + NUM_OF_TAPS)(
 	input 	clk,
 	input 	rx,
 	output 	tx,
@@ -6,6 +6,8 @@ module Interface #(parameter NUM_OF_TAPS = 5, NUM_OF_MODULES = 20, SIZE = 24, BY
 	input [NUM_OF_MODULES-1:0] found,
 	input [NUM_OF_MODULES-1:0] failure,
 	input [NUM_OF_MODULES-1:0] ready,
+	
+	input [NUM_OF_MODULES*NUM_OF_TAPS*8-1:0] co_buf_non,
 	
 	output reg [NUM_OF_MODULES-1:0] ena,
 	output reg [NUM_OF_MODULES-1:0] res,
@@ -25,28 +27,31 @@ reg 								transmit_byte;
 reg [BYTES*8-1:0] 				buff;
 reg [7:0] 						which;
 
-reg [11:0] state;
-parameter	IDLE 				= 12'b000000000001,
-				RECEIVE 			= 12'b000000000010,
-				ASSIGN_TO_REG	= 12'b000000000100,
-				CONFIRM			= 12'b000000001000,
-				TRANSMIT_POLY	= 12'b000000010000,
-				FOUND				= 12'b000000100000,
-				FAILURE			= 12'b000001000000,
-				RESET				= 12'b000010000000,
-				CAN_RECEIVE		= 12'b000100000000,
-				WAIT_FOR_ACCK	= 12'b001000000000,
-				SIGNAL_FOUND	= 12'b010000000000,
-				WAIT_FOR_READY = 12'b100000000000;
+reg [13:0] state;
+parameter	IDLE 					=  14'b00000000000001,
+				RECEIVE 				=  14'b00000000000010,
+				ASSIGN_TO_REG		=  14'b00000000000100,
+				CONFIRM				=  14'b00000000001000,
+				TRANSMIT_POLY		=  14'b00000000010000,
+				FOUND					=  14'b00000000100000,
+				FAILURE				=  14'b00000001000000,
+				RESET					=  14'b00000010000000,
+				CAN_RECEIVE			=  14'b00000100000000,
+				WAIT_FOR_ACCK		=  14'b00001000000000,
+				SIGNAL_FOUND		=  14'b00010000000000,
+				WAIT_FOR_READY 	=  14'b00100000000000,
+				WAIT_FOR_ACCK_F 	= 	14'b01000000000000,
+				SIGNAL_FAIL			=  14'b10000000000000;
 				
 				
-parameter 	START = 	8'hf0,
-				END	=	8'hff,
-				ACCK	=	8'hf1,
-				ERR	=	8'hee,
-				FAIL	=	8'hf2,
-				CAN_REC = 8'hf4,
-				SIG_FOUND = 8'hf3;
+parameter 	START 		= 	8'hf0,
+				END			=	8'hff,
+				ACCK			=	8'hf1,
+				ERR			=	8'hee,
+				FAIL			=	8'hf2,
+				CAN_REC 		= 	8'hf4,
+				SIG_FOUND 	= 	8'hf3,
+				SIG_FAIL 	= 	8'hfa;
 
 wire jeden; 
 assign jeden = 1'b0;
@@ -132,7 +137,9 @@ always @ (posedge clk) begin
 				end
 			end
 			if (failure != {NUM_OF_MODULES{1'b0}}) begin
-				state <= FAILURE;
+				state <= SIGNAL_FAIL;
+				transmit_byte <= 1'b1;
+				byte_out <= SIG_FAIL;
 			end
 		end
 		
@@ -156,7 +163,7 @@ always @ (posedge clk) begin
 		
 		ASSIGN_TO_REG: begin
 			if (ena[assign_count] == 1'b0) begin
-				co_buf[(assign_count+1)*BYTES*8-1-:BYTES*8] <= buff;
+				co_buf[(assign_count+1)*4*8-1-:4*8] <= buff;
 				ena[assign_count] <= 1'b1;
 				state <= WAIT_FOR_READY;
 				//transmit_byte <= 1'b1;
@@ -190,6 +197,14 @@ always @ (posedge clk) begin
 			end
 		end
 		
+		WAIT_FOR_ACCK_F: begin
+			if (take_byte) begin
+				if (byte_in == ACCK) begin
+					state <= FAILURE;
+				end else state <= IDLE;
+			end
+		end
+		
 
 		FOUND: begin
 			if (found[i] == 1'b1) begin
@@ -206,34 +221,40 @@ always @ (posedge clk) begin
 		TRANSMIT_POLY: begin
 			if (tx_ready) begin
 				if (i == 0) begin
-					buff <= co_buf[which*BYTES*8-1-:BYTES*8];
+					buff <= {co_buf[which*4*8-1-:4*8],co_buf_non[which*NUM_OF_TAPS*8-1-:NUM_OF_TAPS*8]};
 				end
 				if (i>0 && i<=BYTES) begin
 					byte_out <= buff[i*8-1-:8];
 					ena[which-1] 		<= 1'b0;
+					res[which-1] 		<= 1'b1;
 				end
 				if (i == BYTES + 1) begin
 					byte_out <= END;
-					res[which-1] 		<= 1'b1;
+					
 				end
 				if (i == BYTES + 2) begin
 					transmit_byte		<= 1'b0;
-					co_buf[(which)*BYTES*8-1-:BYTES*8] <= {BYTES*8{1'b0}};
+					co_buf[(which)*4*8-1-:4*8] <= {4*8{1'b0}};
 					state	<= RESET;
 				end 
 				i <= i + 1;
 			end
 		end
 		
+		SIGNAL_FAIL: begin
+			if (tx_ready) begin
+				state <= WAIT_FOR_ACCK_F;
+				transmit_byte <= 1'b0;
+			end
+		end
+		
 
 		FAILURE: begin
 			if (failure[i] == 1'b1) begin
-				ena[i] <= 1'b0;
-				res[i] <= 1'b1;
-				co_buf[(i+1)*BYTES*8-1-:BYTES*8] <= {BYTES*8{1'b0}};
-				byte_out <= FAIL;
+				which <= i + 1;
 				transmit_byte <= 1'b1;
-				state <= CONFIRM;
+				state <= TRANSMIT_POLY;
+				i <= 0;
 			end else i <= i + 1;
 			if (i > NUM_OF_MODULES)
 				conf(ERR);

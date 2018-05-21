@@ -1,4 +1,4 @@
-module PRNG #(parameter SEED = 384154861654616) (
+module PRNG #(parameter SEED = 8168464) (
 	input 				clk,
 	input					res,
 	output reg [7:0] 	dout,
@@ -28,11 +28,7 @@ always @ (posedge clk) begin
 		done 		<= 1'b0;
 		i 			<= 4'b0000;
 		waiter	<= 8'h00;
-	end 
-	if (waiter < 33) begin
-		waiter <= waiter + 1; // pozwala przeliczyc cala dlugosc rejestru
-	end 
-	if (waiter >= 33) begin
+	end else begin
 		lfsr <= {feedback,lfsr[31:1]};
 		if (i < 7) begin
 			done <= 1'b0;
